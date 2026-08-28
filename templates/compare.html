@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compare Users - Timesheet</title>
+    <script>
+        (function () {
+            var t = localStorage.getItem('theme') || 'dark';
+            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/theme.js" defer></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <button type="button" class="theme-toggle" onclick="toggleTheme()">
+                <span class="theme-icon"></span><span class="theme-text"></span>
+            </button>
+            <a class="back-link" href="/">&larr; Back to dashboard</a>
+            <h1>Compare Users</h1>
+            <p class="subtitle">Select users to compare their activities and working hours</p>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="panel">
+            <div class="compare-head">
+                <h2 class="panel-title">Choose users</h2>
+                <div class="compare-actions">
+                    <button type="button" class="btn-secondary" onclick="toggleAll(true)">Select all</button>
+                    <button type="button" class="btn-secondary" onclick="toggleAll(false)">Clear</button>
+                </div>
+            </div>
+            <form method="get" action="/compare/results" id="compare-form">
+                <div class="user-checklist">
+                    {% for u in all_users %}
+                    <label class="check-chip {{ 'checked' if u.id in selected_ids else '' }}">
+                        <input type="checkbox" name="users" value="{{ u.id }}"
+                               {{ 'checked' if u.id in selected_ids else '' }}
+                               onchange="this.closest('.check-chip').classList.toggle('checked', this.checked)">
+                        {{ u.name }}
+                    </label>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="btn-primary" style="margin-top:16px;">Compare &rarr;</button>
+            </form>
+        </section>
+    </main>
+
+    <script>
+        function toggleAll(state) {
+            document.querySelectorAll('#compare-form input[type="checkbox"]').forEach(function (cb) {
+                cb.checked = state;
+                cb.closest('.check-chip').classList.toggle('checked', state);
+            });
+        }
+    </script>
+</body>
+</html>

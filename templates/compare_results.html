@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparison Results - Timesheet</title>
+    <script>
+        (function () {
+            var t = localStorage.getItem('theme') || 'dark';
+            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="/static/theme.js" defer></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <button type="button" class="theme-toggle" onclick="toggleTheme()">
+                <span class="theme-icon"></span><span class="theme-text"></span>
+            </button>
+            <a class="back-link" href="/compare?{% for id in selected_ids %}users={{ id }}{% if not loop.last %}&{% endif %}{% endfor %}">&larr; Change selection</a>
+            <h1>Comparison Results</h1>
+            {% if results %}
+            <p class="subtitle">Comparing {{ results | map(attribute='name') | join(', ') }}</p>
+            {% endif %}
+        </div>
+    </header>
+
+    <main class="container">
+        {% if errors %}
+        <div class="alert alert-error">Could not load: {{ errors | join("; ") }}</div>
+        {% endif %}
+
+        {% if results %}
+        <!-- Summary table -->
+        <section class="panel">
+            <h2 class="panel-title">Summary</h2>
+            <div class="table-wrap">
+                <table class="timesheet-table compare-table">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Total hours</th>
+                            <th>Tasks logged</th>
+                            <th>Days logged</th>
+                            <th>Avg hours / day</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in results %}
+                        <tr>
+                            <td><a href="/user/{{ r.id }}">{{ r.name }}</a></td>
+                            <td>{{ r.stats.total_hours }}</td>
+                            <td>{{ r.stats.task_count }}</td>
+                            <td>{{ r.stats.days_logged }}</td>
+                            <td>{{ r.stats.avg_hours }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Totals bar chart -->
+        <section class="panel">
+            <h2 class="panel-title">Total working hours</h2>
+            <div class="chart-wrap"><canvas id="totalsChart"></canvas></div>
+        </section>
+
+        <!-- Cumulative multi-line chart -->
+        <section class="panel">
+            <h2 class="panel-title">Cumulative hours over time</h2>
+            <div class="chart-wrap"><canvas id="cumulativeChart"></canvas></div>
+        </section>
+
+        <!-- Task distribution: stacked bar -->
+        <section class="panel">
+            <h2 class="panel-title">Task distribution by type</h2>
+            <p class="add-hint">Hours grouped into activity types (derived from task descriptions).</p>
+            <div class="chart-wrap"><canvas id="categoryChart"></canvas></div>
+        </section>
+
+        <!-- Task distribution: per-user pies -->
+        <section class="panel">
+            <h2 class="panel-title">Task type split per user</h2>
+            <div class="pie-grid">
+                {% for r in results %}
+                <div class="pie-cell">
+                    <h3 class="pie-title">{{ r.name }}</h3>
+                    <div class="pie-wrap"><canvas id="pie-{{ loop.index0 }}"></canvas></div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <!-- Time spent on each task, per user -->
+        <section class="panel">
+            <h2 class="panel-title">Time spent on each task</h2>
+            <div class="tasktime-grid">
+                {% for r in results %}
+                <div class="tasktime-cell">
+                    <h3 class="pie-title">{{ r.name }}</h3>
+                    <div class="chart-wrap"><canvas id="tasktime-{{ loop.index0 }}"></canvas></div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+        {% elif selected_ids %}
+        <p class="empty">No data to compare for the selected users.</p>
+        {% else %}
+        <p class="empty">No users selected. <a href="/compare">Go back and pick some.</a></p>
+        {% endif %}
+    </main>
+
+    {% if comparison %}
+    <script>
+        const css = getComputedStyle(document.documentElement);
+        Chart.defaults.color = css.getPropertyValue('--ink-2').trim();
+        Chart.defaults.borderColor = css.getPropertyValue('--grid-line').trim();
+        const gridLine = css.getPropertyValue('--grid-line').trim();
+
+        const comparison = {{ comparison_json | safe }};
+        const palette = ['#2dd4bf', '#60a5fa', '#f6a35c', '#a78bfa', '#4ade80',
+                         '#f472b6', '#e0c34a', '#7dd3c8', '#c0a080', '#93b5e0',
+                         '#c08a6a', '#8bb8a8'];
+
+        // Totals bar
+        new Chart(document.getElementById('totalsChart'), {
+            type: 'bar',
+            data: {
+                labels: comparison.totals.map(t => t.name),
+                datasets: [{
+                    label: 'Total hours',
+                    data: comparison.totals.map(t => t.total),
+                    backgroundColor: comparison.totals.map((_, i) => palette[i % palette.length]),
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'Hours' } } }
+            }
+        });
+
+        // Cumulative lines
+        new Chart(document.getElementById('cumulativeChart'), {
+            type: 'line',
+            data: {
+                labels: comparison.axis,
+                datasets: comparison.cumulative_series.map((s, i) => {
+                    const color = palette[i % palette.length];
+                    return { label: s.name, data: s.data, borderColor: color,
+                             backgroundColor: color, borderWidth: 2, fill: false,
+                             tension: 0.3, pointRadius: 0 };
+                })
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: gridLine }, title: { display: true, text: 'Cumulative hours' } },
+                    x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 60 } }
+                }
+            }
+        });
+
+        // Task distribution stacked bar (categories on x, one dataset per user)
+        new Chart(document.getElementById('categoryChart'), {
+            type: 'bar',
+            data: {
+                labels: comparison.categories,
+                datasets: comparison.category_series.map((s, i) => {
+                    const color = palette[i % palette.length];
+                    return { label: s.name, data: s.data, backgroundColor: color, borderRadius: 4 };
+                })
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: {
+                    x: { stacked: true, grid: { display: false } },
+                    y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Hours' } }
+                }
+            }
+        });
+
+        // Per-user pies
+        comparison.category_pies.forEach((p, i) => {
+            const el = document.getElementById('pie-' + i);
+            if (!el) return;
+            new Chart(el, {
+                type: 'doughnut',
+                data: {
+                    labels: p.labels,
+                    datasets: [{
+                        data: p.data,
+                        backgroundColor: p.labels.map((_, j) => palette[j % palette.length]),
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }
+                }
+            });
+        });
+
+        // Time spent on each task (horizontal bars per user)
+        comparison.task_time.forEach((tt, i) => {
+            const el = document.getElementById('tasktime-' + i);
+            if (!el) return;
+            new Chart(el, {
+                type: 'bar',
+                data: {
+                    labels: tt.labels,
+                    datasets: [{
+                        label: 'Hours',
+                        data: tt.data,
+                        backgroundColor: palette[i % palette.length],
+                        borderRadius: 4,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true, title: { display: true, text: 'Hours' } } }
+                }
+            });
+        });
+    </script>
+    {% endif %}
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timesheet Dashboard</title>
+    <script>
+        // Apply saved theme before paint to avoid a flash. Default: dark.
+        (function () {
+            var t = localStorage.getItem('theme') || 'dark';
+            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/theme.js" defer></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <button type="button" class="theme-toggle" onclick="toggleTheme()">
+                <span class="theme-icon"></span><span class="theme-text"></span>
+            </button>
+            <h1>Timesheet Dashboard</h1>
+            <p class="subtitle">Select a user to view their timesheet</p>
+        </div>
+    </header>
+
+    <main class="container">
+        {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
+        {% if added %}
+        <div class="alert alert-success">Added "{{ added }}" successfully.</div>
+        {% endif %}
+
+        <div class="grid-head">
+            <h2 class="grid-title">Users</h2>
+            <div class="grid-head-actions">
+                <a class="btn-add btn-add-outline" href="/compare">Compare users</a>
+                <button type="button" class="btn-add" onclick="openAddModal()">+ Add source</button>
+            </div>
+        </div>
+
+        <section class="user-grid">
+            {% for user in users %}
+            <div class="user-box-wrap">
+                <a class="user-box" href="/user/{{ user.id }}">
+                    <div class="user-avatar">{{ user.name[0] | upper }}</div>
+                    <div class="user-name">{{ user.name }}</div>
+                    <div class="user-kind">{{ "Google Sheet" if user.kind == "gsheet" else "CSV" }}</div>
+                    <div class="user-cta">View timesheet &rarr;</div>
+                </a>
+                <form class="delete-form" action="/delete/{{ user.id }}" method="post"
+                      onsubmit="return confirm('Remove {{ user.name }}?');">
+                    <button type="submit" class="btn-delete" title="Remove">&times;</button>
+                </form>
+            </div>
+            {% endfor %}
+        </section>
+
+        {% if not users %}
+        <p class="empty">No users yet. Use "Add source" to get started.</p>
+        {% endif %}
+    </main>
+
+    <!-- Add source modal -->
+    <div class="modal-overlay" id="add-modal" onclick="if (event.target === this) closeAddModal()">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Add source</h3>
+                <button type="button" class="modal-close" onclick="closeAddModal()">&times;</button>
+            </div>
+            <form action="/add" method="post" enctype="multipart/form-data">
+                <div class="field">
+                    <div class="radio-row">
+                        <label class="radio">
+                            <input type="radio" name="source_type" value="gsheet" checked onclick="toggleSource()">
+                            Google Sheet
+                        </label>
+                        <label class="radio">
+                            <input type="radio" name="source_type" value="csv" onclick="toggleSource()">
+                            CSV upload
+                        </label>
+                    </div>
+                </div>
+
+                <div class="field" id="gsheet-field">
+                    <label for="gsheet_url">Google Sheet URL</label>
+                    <input type="url" id="gsheet_url" name="gsheet_url"
+                           placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=0">
+                    <small>The sheet must be shared as "Anyone with the link".</small>
+                </div>
+
+                <div class="field" id="csv-field" style="display:none;">
+                    <label for="csv_file">CSV file</label>
+                    <input type="file" id="csv_file" name="csv_file" accept=".csv,text/csv">
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="closeAddModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Add</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function openAddModal() {
+            document.getElementById('add-modal').classList.add('open');
+        }
+        function closeAddModal() {
+            document.getElementById('add-modal').classList.remove('open');
+        }
+        function toggleSource() {
+            var type = document.querySelector('input[name="source_type"]:checked').value;
+            document.getElementById('gsheet-field').style.display = (type === 'gsheet') ? 'block' : 'none';
+            document.getElementById('csv-field').style.display = (type === 'csv') ? 'block' : 'none';
+        }
+    </script>
+</body>
+</html>

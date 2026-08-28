@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ user.name }} - Timesheet</title>
+    <script>
+        (function () {
+            var t = localStorage.getItem('theme') || 'dark';
+            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="/static/theme.js" defer></script>
+</head>
+<body>
+    <header class="site-header">
+        <div class="container">
+            <button type="button" class="theme-toggle" onclick="toggleTheme()">
+                <span class="theme-icon"></span><span class="theme-text"></span>
+            </button>
+            <a class="back-link" href="/">&larr; Back to dashboard</a>
+            <h1>{{ user.name }}'s Timesheet</h1>
+        </div>
+    </header>
+
+    <main class="container">
+        {% if rows %}
+        <!-- Chart card with toggle -->
+        {% if stats.chart_labels %}
+        <section class="chart-card">
+            <div class="chart-toggle">
+                <button type="button" class="toggle-btn active" data-mode="progress" onclick="setMode('progress')">Cumulative hours</button>
+                <button type="button" class="toggle-btn" data-mode="daily" onclick="setMode('daily')">Hours per day</button>
+            </div>
+            <div class="chart-wrap">
+                <canvas id="hoursChart"></canvas>
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- Big-number stat row -->
+        <section class="stat-row">
+            <div class="stat-block">
+                <div class="stat-label">Total hours</div>
+                <div class="stat-value">{{ stats.total_hours }}</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-label">Tasks logged</div>
+                <div class="stat-value">{{ stats.task_count }}</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-label">Days logged</div>
+                <div class="stat-value">{{ stats.days_logged }}</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-label">Avg hours / day</div>
+                <div class="stat-value">{{ stats.avg_hours }}</div>
+            </div>
+        </section>
+
+        <!-- Top tasks by hours -->
+        {% if stats.top_tasks %}
+        <section class="panel">
+            <h2 class="panel-title">Top tasks by hours</h2>
+            <ol class="top-tasks paginated" data-page-size="10">
+                {% for t in stats.top_tasks %}
+                <li class="page-item">
+                    <span class="tt-rank">{{ loop.index }}</span>
+                    <span class="tt-hours">{{ t.hours }}h</span>
+                    <span class="tt-task">{{ t.task }}</span>
+                    <span class="tt-date">{{ t.date }}</span>
+                </li>
+                {% endfor %}
+            </ol>
+            <div class="pagination" data-for-list="prev"></div>
+        </section>
+        {% endif %}
+
+        <!-- Tasks timeline, newest first -->
+        {% if stats.tasks %}
+        <section class="panel">
+            <h2 class="panel-title">Tasks (newest first)</h2>
+            <div class="timeline paginated" data-page-size="10">
+                {% for t in stats.tasks %}
+                <div class="timeline-item page-item">
+                    <div class="timeline-meta">
+                        <span class="timeline-date">{{ t.date or "—" }}</span>
+                        {% if t.day %}<span class="timeline-day">{{ t.day }}</span>{% endif %}
+                        {% if t.hours is not none %}<span class="timeline-hours">{{ t.hours }}h</span>{% endif %}
+                    </div>
+                    <div class="timeline-task">{{ t.task }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="pagination" data-for-list="prev"></div>
+        </section>
+        {% endif %}
+        {% else %}
+        <p class="empty">No timesheet entries found for {{ user.name }}.</p>
+        {% endif %}
+    </main>
+
+    <script>
+        // Client-side pagination: paginate each `.paginated` list whose
+        // immediately following sibling is a `.pagination` container.
+        (function () {
+            document.querySelectorAll('.paginated').forEach(function (list) {
+                var pager = list.nextElementSibling;
+                if (!pager || !pager.classList.contains('pagination')) return;
+
+                var items = Array.prototype.slice.call(list.querySelectorAll('.page-item'));
+                var pageSize = parseInt(list.dataset.pageSize, 10) || 10;
+                var pageCount = Math.ceil(items.length / pageSize);
+
+                // No pagination needed for 10 or fewer items.
+                if (items.length <= pageSize) {
+                    pager.style.display = 'none';
+                    return;
+                }
+
+                var current = 1;
+
+                function showPage(page) {
+                    current = page;
+                    var start = (page - 1) * pageSize;
+                    var end = start + pageSize;
+                    items.forEach(function (el, i) {
+                        el.style.display = (i >= start && i < end) ? '' : 'none';
+                    });
+                    renderControls();
+                }
+
+                function renderControls() {
+                    pager.innerHTML = '';
+
+                    var prev = document.createElement('button');
+                    prev.type = 'button';
+                    prev.className = 'page-btn';
+                    prev.textContent = 'Prev';
+                    prev.disabled = current === 1;
+                    prev.onclick = function () { if (current > 1) showPage(current - 1); };
+                    pager.appendChild(prev);
+
+                    for (var p = 1; p <= pageCount; p++) {
+                        (function (p) {
+                            var b = document.createElement('button');
+                            b.type = 'button';
+                            b.className = 'page-btn' + (p === current ? ' active' : '');
+                            b.textContent = p;
+                            b.onclick = function () { showPage(p); };
+                            pager.appendChild(b);
+                        })(p);
+                    }
+
+                    var next = document.createElement('button');
+                    next.type = 'button';
+                    next.className = 'page-btn';
+                    next.textContent = 'Next';
+                    next.disabled = current === pageCount;
+                    next.onclick = function () { if (current < pageCount) showPage(current + 1); };
+                    pager.appendChild(next);
+                }
+
+                showPage(1);
+            });
+        })();
+    </script>
+
+    {% if stats and stats.chart_labels %}
+    <script>
+        const css = getComputedStyle(document.documentElement);
+        Chart.defaults.color = css.getPropertyValue('--ink-2').trim();
+        Chart.defaults.borderColor = css.getPropertyValue('--grid-line').trim();
+
+        const labels = {{ chart_labels_json | safe }};
+        const daily = {{ chart_values_json | safe }};
+        const cumulative = {{ cumulative_values_json | safe }};
+
+        const ctx = document.getElementById('hoursChart');
+        let chart;
+
+        function render(mode) {
+            if (chart) chart.destroy();
+            const isProgress = (mode === 'progress');
+            chart = new Chart(ctx, {
+                type: isProgress ? 'line' : 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: isProgress ? 'Cumulative hours' : 'Hours',
+                        data: isProgress ? cumulative : daily,
+                        backgroundColor: isProgress ? 'rgba(13,148,136,0.10)' : '#0d9488',
+                        borderColor: '#0f766e',
+                        borderWidth: 2,
+                        fill: isProgress,
+                        tension: 0.35,
+                        pointRadius: isProgress ? 3 : 0,
+                        pointBackgroundColor: '#0f766e',
+                        borderRadius: isProgress ? 0 : 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: css.getPropertyValue('--grid-line').trim() }, title: { display: true, text: 'Hours' } },
+                        x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 60 } }
+                    }
+                }
+            });
+        }
+
+        function setMode(mode) {
+            document.querySelectorAll('.toggle-btn').forEach(function (b) {
+                b.classList.toggle('active', b.dataset.mode === mode);
+            });
+            render(mode);
+        }
+
+        render('progress');
+    </script>
+    {% endif %}
+</body>
+</html>
