@@ -179,3 +179,4 @@ sample_ui/
 
 # python codebase for rust migraiton
 pybase/
+.vercel

@@ -31,6 +31,7 @@ import asyncio
 import csv
 import io
 import json
+import os
 import re
 import uuid
 from dataclasses import dataclass, asdict
@@ -51,7 +52,28 @@ from fastapi.templating import Jinja2Templates
 # --------------------------------------------------------------------------- #
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+
+# The app bundles seed data in the repo (read-only on serverless hosts like
+# Vercel, where only /tmp is writable). Reads prefer the bundled copy; writes
+# always go to a writable directory.
+BUNDLED_DATA_DIR = BASE_DIR / "data"
+BUNDLED_SOURCES_FILE = BUNDLED_DATA_DIR / "sources.json"
+
+
+def _writable_data_dir() -> Path:
+    """Return a directory the process can write to.
+
+    On read-only serverless filesystems (e.g. Vercel, where the code lives in
+    /var/task) only /tmp is writable, so route runtime writes there. Locally
+    we keep everything under the project's data/ folder.
+    """
+    read_only = os.environ.get("VERCEL") or str(BASE_DIR).startswith("/var/task")
+    if read_only:
+        return Path("/tmp") / "kactii-timesheet-data"
+    return BUNDLED_DATA_DIR
+
+
+DATA_DIR = _writable_data_dir()
 UPLOAD_DIR = DATA_DIR / "uploads"
 SOURCES_FILE = DATA_DIR / "sources.json"
 
@@ -77,26 +99,41 @@ class Source:
 # --------------------------------------------------------------------------- #
 
 def _ensure_storage() -> None:
+    """Ensure the writable upload directory exists.
+
+    Never touches the bundled (possibly read-only) data directory. If neither
+    a writable nor a bundled sources file exists yet, seed the writable one.
+    """
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    if not SOURCES_FILE.exists():
-        seed = [
+    if not SOURCES_FILE.exists() and not BUNDLED_SOURCES_FILE.exists():
+        _write_sources([
             Source(
                 id="meeran",
                 name="Meeran",
                 kind="gsheet",
                 location=_gsheet_csv_export_url(DEFAULT_SPREADSHEET_ID, sheet_name="Sheet1"),
             )
-        ]
-        _write_sources(seed)
+        ])
+
+
+def _sources_file_for_read() -> Path:
+    """Prefer the writable sources file; fall back to the bundled seed."""
+    if SOURCES_FILE.exists():
+        return SOURCES_FILE
+    return BUNDLED_SOURCES_FILE
 
 
 def _read_sources() -> List[Source]:
     _ensure_storage()
-    raw = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+    path = _sources_file_for_read()
+    if not path.exists():
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
     return [Source(**item) for item in raw]
 
 
 def _write_sources(sources: List[Source]) -> None:
+    # Always write to the writable location (may differ from the bundled seed).
     SOURCES_FILE.parent.mkdir(parents=True, exist_ok=True)
     SOURCES_FILE.write_text(
         json.dumps([asdict(s) for s in sources], indent=2),
@@ -302,14 +339,19 @@ def build_stats(rows: List[Dict[str, str]]) -> Dict[str, Any]:
         task = (row.get("Task Details", "") or "").strip()
         hours = _parse_hours(row.get("Hours", ""))
 
+        # Every dated row is plotted, even when hours are blank or the task is
+        # "NA": those days register as 0 so the line drops to zero there.
+        if date_str:
+            parsed = _parse_date(date_str)
+            if parsed is not None:
+                per_date.setdefault(date_str, 0.0)
+                date_order[date_str] = parsed
+                if hours is not None:
+                    per_date[date_str] = round(per_date[date_str] + hours, 2)
+
         if hours is not None:
             total_hours += hours
             hours_count += 1
-            if date_str:
-                per_date[date_str] = round(per_date.get(date_str, 0.0) + hours, 2)
-                parsed = _parse_date(date_str)
-                if parsed is not None:
-                    date_order[date_str] = parsed
 
         if task and task.upper() != "NA":
             category = _categorize_task(task)
@@ -383,9 +425,14 @@ async def load_source(source: Source) -> tuple[List[str], List[Dict[str, str]]]:
             response.raise_for_status()
         text = response.text
     elif source.kind == "csv":
+        # Prefer the writable uploads dir; fall back to a bundled copy.
         path = UPLOAD_DIR / source.location
         if not path.exists():
-            raise FileNotFoundError(f"Uploaded file missing: {source.location}")
+            bundled = BUNDLED_DATA_DIR / "uploads" / source.location
+            if bundled.exists():
+                path = bundled
+            else:
+                raise FileNotFoundError(f"Uploaded file missing: {source.location}")
         text = path.read_text(encoding="utf-8", errors="replace")
     else:
         raise ValueError(f"Unknown source kind: {source.kind}")

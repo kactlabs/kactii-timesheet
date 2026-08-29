@@ -181,9 +181,17 @@
         const ctx = document.getElementById('hoursChart');
         let chart;
 
+        const gridLine = css.getPropertyValue('--grid-line').trim();
+
         function render(mode) {
             if (chart) chart.destroy();
             const isProgress = (mode === 'progress');
+
+            // Per-bar color: mark zero / NA days with a faint tint so empty
+            // days are still visible on the daily bar chart.
+            const zeroColor = 'rgba(148,163,184,0.35)';
+            const barColors = daily.map(function (v) { return v > 0 ? '#0d9488' : zeroColor; });
+
             chart = new Chart(ctx, {
                 type: isProgress ? 'line' : 'bar',
                 data: {
@@ -191,22 +199,37 @@
                     datasets: [{
                         label: isProgress ? 'Cumulative hours' : 'Hours',
                         data: isProgress ? cumulative : daily,
-                        backgroundColor: isProgress ? 'rgba(13,148,136,0.10)' : '#0d9488',
+                        backgroundColor: isProgress ? 'rgba(13,148,136,0.12)' : barColors,
                         borderColor: '#0f766e',
-                        borderWidth: 2,
+                        borderWidth: isProgress ? 2 : 0,
                         fill: isProgress,
                         tension: 0.35,
-                        pointRadius: isProgress ? 3 : 0,
+                        pointRadius: isProgress ? 2 : 0,
+                        pointHoverRadius: 5,
                         pointBackgroundColor: '#0f766e',
-                        borderRadius: isProgress ? 0 : 4,
+                        borderRadius: isProgress ? 0 : 3,
+                        minBarLength: isProgress ? 0 : 2,   // keep a sliver visible for 0h days
+                        spanGaps: false,
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (c) {
+                                    if (!isProgress && c.parsed.y === 0) {
+                                        return 'NA / no hours logged';
+                                    }
+                                    return c.parsed.y + (isProgress ? ' total hours' : ' hours');
+                                }
+                            }
+                        }
+                    },
                     scales: {
-                        y: { beginAtZero: true, grid: { color: css.getPropertyValue('--grid-line').trim() }, title: { display: true, text: 'Hours' } },
+                        y: { beginAtZero: true, grid: { color: gridLine }, title: { display: true, text: 'Hours' } },
                         x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 60 } }
                     }
                 }

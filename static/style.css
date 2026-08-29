@@ -826,3 +826,50 @@ body {
     font-size: 1rem;
     line-height: 1;
 }
+
+/* ---------- Compare select dropdowns ---------- */
+.select-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+
+.select-field {
+    flex: 1 1 220px;
+    min-width: 180px;
+}
+
+.select-field label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--ink-2);
+    margin-bottom: 6px;
+}
+
+.select-field select {
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 0.92rem;
+    cursor: pointer;
+    transition: border-color var(--ease), box-shadow var(--ease);
+}
+
+.select-field select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.vs-badge {
+    padding-bottom: 11px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--ink-3);
+    text-transform: uppercase;
+}
