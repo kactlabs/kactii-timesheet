@@ -21,7 +21,7 @@
                 <span class="theme-icon"></span><span class="theme-text"></span>
             </button>
             <h1>Timesheet Dashboard</h1>
-            <p class="subtitle">Select a user to view their timesheet</p>
+            <p class="subtitle">Select a profile to view their timesheet, or compare profiles</p>
         </div>
     </header>
 
@@ -33,11 +33,16 @@
         <div class="alert alert-success">Added "{{ added }}" successfully.</div>
         {% endif %}
 
+        <section class="panel" id="top-performer" style="margin-bottom:24px;">
+            <h2 class="panel-title" style="margin:0;">🏆 Top performer of the week</h2>
+            <div id="top-body" style="margin-top:14px;">Loading…</div>
+        </section>
+
         <div class="grid-head">
-            <h2 class="grid-title">Users</h2>
+            <h2 class="grid-title">Profiles</h2>
             <div class="grid-head-actions">
-                <a class="btn-add btn-add-outline" href="/compare">Compare users</a>
-                <button type="button" class="btn-add" onclick="openAddModal()">+ Add source</button>
+                <a class="btn-add btn-add-outline" href="/compare">Compare profiles</a>
+                <button type="button" class="btn-add" onclick="openAddModal()">+ Add profile</button>
             </div>
         </div>
 
@@ -59,18 +64,23 @@
         </section>
 
         {% if not users %}
-        <p class="empty">No users yet. Use "Add source" to get started.</p>
+        <p class="empty">No profiles yet. Use "Add profile" to get started.</p>
         {% endif %}
     </main>
 
-    <!-- Add source modal -->
+    <!-- Add profile modal -->
     <div class="modal-overlay" id="add-modal" onclick="if (event.target === this) closeAddModal()">
         <div class="modal">
             <div class="modal-header">
-                <h3>Add source</h3>
+                <h3>Add profile</h3>
                 <button type="button" class="modal-close" onclick="closeAddModal()">&times;</button>
             </div>
             <form action="/add" method="post" enctype="multipart/form-data">
+                <div class="field" id="name-field">
+                    <label for="name">Person's name</label>
+                    <input type="text" id="name" name="name" placeholder="e.g. Priya" required>
+                </div>
+
                 <div class="field">
                     <div class="radio-row">
                         <label class="radio">
@@ -81,6 +91,10 @@
                             <input type="radio" name="source_type" value="csv" onclick="toggleSource()">
                             CSV upload
                         </label>
+                        <label class="radio">
+                            <input type="radio" name="source_type" value="gsheet_tabs" onclick="toggleSource()">
+                            Many tabs of one sheet
+                        </label>
                     </div>
                 </div>
 
@@ -88,7 +102,13 @@
                     <label for="gsheet_url">Google Sheet URL</label>
                     <input type="url" id="gsheet_url" name="gsheet_url"
                            placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=0">
-                    <small>The sheet must be shared as "Anyone with the link".</small>
+                    <small>The sheet must be shared as "Anyone with the link". Columns: Date, Day, Task Details, Hours, Resources used.</small>
+                </div>
+
+                <div class="field" id="tabs-field" style="display:none;">
+                    <label for="tabs">Tab names (one per line, each becomes a profile)</label>
+                    <textarea id="tabs" name="tabs" rows="8" placeholder="Hema varshini V&#10;KISHORE R&#10;Brindha S"></textarea>
+                    <small>Paste the spreadsheet URL above. Tab names must match exactly (spelling, spaces, capitals), otherwise Google returns the first tab instead.</small>
                 </div>
 
                 <div class="field" id="csv-field" style="display:none;">
@@ -113,9 +133,51 @@
         }
         function toggleSource() {
             var type = document.querySelector('input[name="source_type"]:checked').value;
-            document.getElementById('gsheet-field').style.display = (type === 'gsheet') ? 'block' : 'none';
+            var tabsMode = (type === 'gsheet_tabs');
+            document.getElementById('gsheet-field').style.display = (type === 'gsheet' || tabsMode) ? 'block' : 'none';
+            document.getElementById('tabs-field').style.display = tabsMode ? 'block' : 'none';
             document.getElementById('csv-field').style.display = (type === 'csv') ? 'block' : 'none';
+            document.getElementById('name-field').style.display = tabsMode ? 'none' : 'block';
+            document.getElementById('name').required = !tabsMode;
         }
+
+        // ---- Top performer of the week ----
+        // Uses GET /top-performer (current week) from app.py.
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, function (c) {
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+            });
+        }
+
+        function loadTop() {
+            var body = document.getElementById('top-body');
+            body.textContent = 'Loading…';
+
+            fetch('/top-performer?period=week&which=this')
+                .then(function (r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                })
+                .then(function (d) {
+                    var range = d.week_start + ' to ' + d.week_end;
+                    if (!d.top || !d.top.length) {
+                        body.textContent = 'No hours logged this week yet (' + range + ').';
+                        return;
+                    }
+                    var names = d.top.map(function (t) {
+                        return '<a href="/user/' + encodeURIComponent(t.id) + '">' + escapeHtml(t.name) + '</a>';
+                    }).join(' &amp; ');
+                    body.innerHTML =
+                        '<p style="margin:0 0 4px;font-size:1.25rem;"><strong>' + names + '</strong>'
+                        + ' &mdash; ' + escapeHtml(d.top[0].hours) + ' hrs</p>'
+                        + '<p style="margin:0;opacity:.75;">' + escapeHtml(range)
+                        + (d.top.length > 1 ? ' &middot; tie' : '') + '</p>';
+                })
+                .catch(function (e) {
+                    body.textContent = 'Could not load top performer (' + e.message + ').';
+                });
+        }
+        document.addEventListener('DOMContentLoaded', loadTop);
     </script>
 </body>
 </html>

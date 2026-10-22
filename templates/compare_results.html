@@ -41,11 +41,13 @@
                 <table class="timesheet-table compare-table">
                     <thead>
                         <tr>
-                            <th>User</th>
+                            <th>Profile</th>
                             <th>Total hours</th>
                             <th>Tasks logged</th>
                             <th>Days logged</th>
-                            <th>Avg hours / day</th>
+                            <th>Avg hours / active day</th>
+                            <th>Best day</th>
+                            <th>Longest streak</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -56,6 +58,8 @@
                             <td>{{ r.stats.task_count }}</td>
                             <td>{{ r.stats.days_logged }}</td>
                             <td>{{ r.stats.avg_hours }}</td>
+                            <td>{% if r.stats.best_day %}{{ r.stats.best_day.hours }}h ({{ r.stats.best_day.date }}){% else %}-{% endif %}</td>
+                            <td>{{ r.stats.longest_streak }} days</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -67,6 +71,20 @@
         <section class="panel">
             <h2 class="panel-title">Total working hours</h2>
             <div class="chart-wrap"><canvas id="totalsChart"></canvas></div>
+        </section>
+
+        <!-- Hours per week / month / year, grouped bars -->
+        <section class="panel">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                <h2 class="panel-title" style="margin:0;" id="period-title">Hours per week</h2>
+                <div class="chart-toggle">
+                    <button type="button" class="toggle-btn active" data-period="week" onclick="setPeriod('week')">Week</button>
+                    <button type="button" class="toggle-btn" data-period="month" onclick="setPeriod('month')">Month</button>
+                    <button type="button" class="toggle-btn" data-period="year" onclick="setPeriod('year')">Year</button>
+                </div>
+            </div>
+            <p class="add-hint" id="period-hint" style="margin-top:12px;"></p>
+            <div class="chart-wrap"><canvas id="weeklyChart"></canvas></div>
         </section>
 
         <!-- Cumulative multi-line chart -->
@@ -84,7 +102,7 @@
 
         <!-- Task distribution: per-user pies -->
         <section class="panel">
-            <h2 class="panel-title">Task type split per user</h2>
+            <h2 class="panel-title">Task type split per profile</h2>
             <div class="pie-grid">
                 {% for r in results %}
                 <div class="pie-cell">
@@ -108,20 +126,21 @@
             </div>
         </section>
         {% elif selected_ids %}
-        <p class="empty">No data to compare for the selected users.</p>
+        <p class="empty">No data to compare for the selected profiles.</p>
         {% else %}
-        <p class="empty">No users selected. <a href="/compare">Go back and pick some.</a></p>
+        <p class="empty">No profiles selected. <a href="/compare">Go back and pick some.</a></p>
         {% endif %}
     </main>
 
     {% if comparison %}
+    <script type="application/json" id="comparison-data">{{ comparison_json | safe }}</script>
     <script>
         const css = getComputedStyle(document.documentElement);
         Chart.defaults.color = css.getPropertyValue('--ink-2').trim();
         Chart.defaults.borderColor = css.getPropertyValue('--grid-line').trim();
         const gridLine = css.getPropertyValue('--grid-line').trim();
 
-        const comparison = {{ comparison_json | safe }};
+        const comparison = JSON.parse(document.getElementById('comparison-data').textContent);
         const palette = ['#2dd4bf', '#60a5fa', '#f6a35c', '#a78bfa', '#4ade80',
                          '#f472b6', '#e0c34a', '#7dd3c8', '#c0a080', '#93b5e0',
                          '#c08a6a', '#8bb8a8'];
@@ -145,6 +164,57 @@
             }
         });
 
+        // Grouped bars per week / month / year (one dataset per profile)
+        const PERIODS = {
+            week: {
+                title: 'Hours per week', y: 'Hours per week', x: 'Week starting (dd-mm-yyyy)',
+                hint: 'Week starting date (dd-mm-yyyy). Weeks with no entries show as 0, so gaps are visible.',
+                axis: comparison.weekly_axis, series: comparison.weekly_series
+            },
+            month: {
+                title: 'Hours per month', y: 'Hours per month', x: 'Month',
+                hint: 'Calendar months. Months with no entries show as 0, so gaps are visible.',
+                axis: comparison.monthly_axis, series: comparison.monthly_series
+            },
+            year: {
+                title: 'Hours per year', y: 'Hours per year', x: 'Year',
+                hint: 'Calendar years. Years with no entries show as 0.',
+                axis: comparison.yearly_axis, series: comparison.yearly_series
+            }
+        };
+        let periodChart = null;
+
+        function setPeriod(period) {
+            const p = PERIODS[period];
+            document.querySelectorAll('[data-period]').forEach(function (b) {
+                b.classList.toggle('active', b.getAttribute('data-period') === period);
+            });
+            document.getElementById('period-title').textContent = p.title;
+            document.getElementById('period-hint').textContent = p.hint;
+            if (periodChart) periodChart.destroy();
+            periodChart = new Chart(document.getElementById('weeklyChart'), {
+                type: 'bar',
+                data: {
+                    labels: p.axis,
+                    datasets: p.series.map((s, i) => ({
+                        label: s.name, data: s.data,
+                        backgroundColor: palette[i % palette.length], borderRadius: 3
+                    }))
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { display: true, position: 'top' } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: gridLine }, title: { display: true, text: p.y } },
+                        x: { grid: { display: false }, title: { display: true, text: p.x },
+                             ticks: { autoSkip: true, maxTicksLimit: 12, maxRotation: 0 } }
+                    }
+                }
+            });
+        }
+        setPeriod('week');
+
         // Cumulative lines
         new Chart(document.getElementById('cumulativeChart'), {
             type: 'line',
@@ -163,12 +233,13 @@
                 plugins: { legend: { display: true, position: 'top' } },
                 scales: {
                     y: { beginAtZero: true, grid: { color: gridLine }, title: { display: true, text: 'Cumulative hours' } },
-                    x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 60 } }
+                    x: { grid: { display: false }, title: { display: true, text: 'Date (dd-mm-yyyy)' },
+                         ticks: { autoSkip: true, maxTicksLimit: 12, maxRotation: 0 } }
                 }
             }
         });
 
-        // Task distribution stacked bar (categories on x, one dataset per user)
+        // Task distribution stacked bar
         new Chart(document.getElementById('categoryChart'), {
             type: 'bar',
             data: {
@@ -188,7 +259,7 @@
             }
         });
 
-        // Per-user pies
+        // Per-profile doughnuts
         comparison.category_pies.forEach((p, i) => {
             const el = document.getElementById('pie-' + i);
             if (!el) return;
@@ -208,7 +279,7 @@
             });
         });
 
-        // Time spent on each task (horizontal bars per user)
+        // Time spent on each task (horizontal bars per profile)
         comparison.task_time.forEach((tt, i) => {
             const el = document.getElementById('tasktime-' + i);
             if (!el) return;
@@ -234,4 +305,3 @@
     </script>
     {% endif %}
 </body>
-</html>

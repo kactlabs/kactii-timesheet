@@ -27,20 +27,8 @@
 
     <main class="container">
         {% if rows %}
-        <!-- Chart card with toggle -->
-        {% if stats.chart_labels %}
-        <section class="chart-card">
-            <div class="chart-toggle">
-                <button type="button" class="toggle-btn active" data-mode="progress" onclick="setMode('progress')">Cumulative hours</button>
-                <button type="button" class="toggle-btn" data-mode="daily" onclick="setMode('daily')">Hours per day</button>
-            </div>
-            <div class="chart-wrap">
-                <canvas id="hoursChart"></canvas>
-            </div>
-        </section>
-        {% endif %}
 
-        <!-- Big-number stat row -->
+        <!-- Big-number stat row (now above the chart) -->
         <section class="stat-row">
             <div class="stat-block">
                 <div class="stat-label">Total hours</div>
@@ -55,12 +43,34 @@
                 <div class="stat-value">{{ stats.days_logged }}</div>
             </div>
             <div class="stat-block">
-                <div class="stat-label">Avg hours / day</div>
+                <div class="stat-label">Avg hours / active day</div>
                 <div class="stat-value">{{ stats.avg_hours }}</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-label">Best day{% if stats.best_day %} ({{ stats.best_day.date }}){% endif %}</div>
+                <div class="stat-value">{{ stats.best_day.hours if stats.best_day else 0 }}</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-label">Longest streak (days)</div>
+                <div class="stat-value">{{ stats.longest_streak }}</div>
             </div>
         </section>
 
-        <!-- Top tasks by hours -->
+        <!-- Chart card with toggle -->
+        {% if stats.chart_labels %}
+        <section class="chart-card">
+            <div class="chart-toggle">
+                <button type="button" class="toggle-btn active" data-mode="progress" onclick="setMode('progress')">Cumulative hours</button>
+                <button type="button" class="toggle-btn" data-mode="daily" onclick="setMode('daily')">Hours per day</button>
+                <button type="button" class="toggle-btn" data-mode="weekly" onclick="setMode('weekly')">Weekly</button>
+            </div>
+            <div class="chart-wrap">
+                <canvas id="hoursChart"></canvas>
+            </div>
+        </section>
+        {% endif %}
+
+        <!-- Top tasks by hours (tasks with the same name are merged) -->
         {% if stats.top_tasks %}
         <section class="panel">
             <h2 class="panel-title">Top tasks by hours</h2>
@@ -69,8 +79,8 @@
                 <li class="page-item">
                     <span class="tt-rank">{{ loop.index }}</span>
                     <span class="tt-hours">{{ t.hours }}h</span>
-                    <span class="tt-task">{{ t.task }}</span>
-                    <span class="tt-date">{{ t.date }}</span>
+                    <span class="tt-task">{{ t.task }}{% if t.count > 1 %} <small>({{ t.count }} entries)</small>{% endif %}</span>
+                    <span class="tt-date">{% if t.count > 1 %}{{ t.first_date }} &rarr; {{ t.last_date }}{% else %}{{ t.last_date }}{% endif %}</span>
                 </li>
                 {% endfor %}
             </ol>
@@ -103,8 +113,7 @@
     </main>
 
     <script>
-        // Client-side pagination: paginate each `.paginated` list whose
-        // immediately following sibling is a `.pagination` container.
+        // Client-side pagination for each `.paginated` list.
         (function () {
             document.querySelectorAll('.paginated').forEach(function (list) {
                 var pager = list.nextElementSibling;
@@ -114,7 +123,6 @@
                 var pageSize = parseInt(list.dataset.pageSize, 10) || 10;
                 var pageCount = Math.ceil(items.length / pageSize);
 
-                // No pagination needed for 10 or fewer items.
                 if (items.length <= pageSize) {
                     pager.style.display = 'none';
                     return;
@@ -169,68 +177,187 @@
     </script>
 
     {% if stats and stats.chart_labels %}
+    <script type="application/json" id="chart-data">{{ chart_data_json | safe }}</script>
     <script>
         const css = getComputedStyle(document.documentElement);
         Chart.defaults.color = css.getPropertyValue('--ink-2').trim();
         Chart.defaults.borderColor = css.getPropertyValue('--grid-line').trim();
 
-        const labels = {{ chart_labels_json | safe }};
-        const daily = {{ chart_values_json | safe }};
-        const cumulative = {{ cumulative_values_json | safe }};
+        // All labels are dd-mm-yyyy (normalized on the server).
+        const data = JSON.parse(document.getElementById('chart-data').textContent);
+        const weeklyLabels = data.weeklyLabels;
+        const weeklyValues = data.weeklyValues;
+
+        // ---- Continuous calendar axis -------------------------------------
+        // The server only sends days that were logged. Fill every calendar day
+        // between the first and last entry so the x-axis can tick every
+        // TICK_EVERY_DAYS days exactly. Missing days get 0 hours; the
+        // cumulative total and the trend line carry their previous value.
+        let TICK_EVERY_DAYS = 7;   // set below: every day for short ranges, weekly for long ones
+        const DAY_MS = 86400000;
+
+        function pad2(n) { return (n < 10 ? '0' : '') + n; }
+        function parseDMY(s) {
+            var p = s.split('-');
+            return Date.UTC(+p[2], +p[1] - 1, +p[0]);
+        }
+        function fmtDMY(ms) {
+            var d = new Date(ms);
+            return pad2(d.getUTCDate()) + '-' + pad2(d.getUTCMonth() + 1) + '-' + d.getUTCFullYear();
+        }
+
+        function fillDays(srcLabels, srcDaily, srcCum, srcAvg) {
+            if (!srcLabels.length) {
+                return { labels: [], daily: [], cumulative: [], movingAvg: [] };
+            }
+            var byLabel = {};
+            srcLabels.forEach(function (l, i) { byLabel[l] = i; });
+
+            var start = parseDMY(srcLabels[0]);
+            var end = parseDMY(srcLabels[srcLabels.length - 1]);
+            var out = { labels: [], daily: [], cumulative: [], movingAvg: [] };
+            var lastCum = 0, lastAvg = 0;
+
+            for (var t = start; t <= end; t += DAY_MS) {
+                var label = fmtDMY(t);
+                out.labels.push(label);
+                if (label in byLabel) {
+                    var i = byLabel[label];
+                    lastCum = srcCum[i];
+                    lastAvg = srcAvg[i];
+                    out.daily.push(srcDaily[i]);
+                } else {
+                    out.daily.push(0);
+                }
+                out.cumulative.push(lastCum);
+                out.movingAvg.push(lastAvg);
+            }
+            return out;
+        }
+
+        const filled = fillDays(data.labels, data.daily, data.cumulative, data.movingAvg);
+        const labels = filled.labels;
+        const daily = filled.daily;
+        const cumulative = filled.cumulative;
+        const movingAvg = filled.movingAvg;
+        // Up to ~100 days: label every day (days with no hours show as a blank
+        // bar under their date). Longer ranges: one label per week so it stays readable.
+        TICK_EVERY_DAYS = labels.length <= 100 ? 1 : 7;
 
         const ctx = document.getElementById('hoursChart');
+        const gridLine = css.getPropertyValue('--grid-line').trim();
         let chart;
 
-        const gridLine = css.getPropertyValue('--grid-line').trim();
+        const TEAL = '#0d9488';
+        const TEAL_DARK = '#0f766e';
+        const AMBER = '#f59e0b';
 
         function render(mode) {
             if (chart) chart.destroy();
-            const isProgress = (mode === 'progress');
 
-            // Per-bar color: mark zero / NA days with a faint tint so empty
-            // days are still visible on the daily bar chart.
-            const zeroColor = 'rgba(148,163,184,0.35)';
-            const barColors = daily.map(function (v) { return v > 0 ? '#0d9488' : zeroColor; });
+            let type, datasets, chartLabels, yTitle, xTitle;
+
+            if (mode === 'progress') {
+                type = 'line';
+                chartLabels = labels;
+                yTitle = 'Cumulative hours';
+                xTitle = 'Date (dd-mm-yyyy)';
+                datasets = [{
+                    label: 'Cumulative hours',
+                    data: cumulative,
+                    backgroundColor: 'rgba(13,148,136,0.12)',
+                    borderColor: TEAL_DARK,
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.35,
+                    pointRadius: 2,
+                    pointHoverRadius: 5,
+                    pointBackgroundColor: TEAL_DARK
+                }];
+            } else if (mode === 'daily') {
+                type = 'bar';
+                chartLabels = labels;
+                yTitle = 'Hours per day';
+                xTitle = 'Date (dd-mm-yyyy)';
+                datasets = [
+                    {
+                        type: 'bar',
+                        label: 'Hours',
+                        data: daily,
+                        // Zero days are invisible so only logged days stand out.
+                        backgroundColor: daily.map(function (v) {
+                            return v >= 8 ? TEAL : (v > 0 ? TEAL_DARK : 'transparent');
+                        }),
+                        borderRadius: 3,
+                        order: 2
+                    },
+                    {
+                        type: 'line',
+                        label: 'Trend (7-entry average)',
+                        data: movingAvg,
+                        borderColor: AMBER,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.35,
+                        order: 1
+                    }
+                ];
+            } else {
+                type = 'bar';
+                chartLabels = weeklyLabels;
+                yTitle = 'Hours per week';
+                xTitle = 'Week starting (dd-mm-yyyy)';
+                datasets = [{
+                    label: 'Hours',
+                    data: weeklyValues,
+                    backgroundColor: weeklyValues.map(function (v) { return v > 0 ? TEAL : 'transparent'; }),
+                    borderRadius: 3
+                }];
+            }
+
+            // Cumulative and daily views: a label for every day on short ranges,
+            // otherwise one per 7 calendar days.
+            // Weekly view: every week is labelled, including weeks with no hours
+            // (those show as a date with an empty bar).
+            const xTicks = (mode === 'weekly')
+                ? { autoSkip: false, maxRotation: 45, minRotation: 0 }
+                : {
+                    autoSkip: false,
+                    maxRotation: TICK_EVERY_DAYS === 1 ? 90 : 45,
+                    minRotation: TICK_EVERY_DAYS === 1 ? 90 : 0,
+                    callback: function (value, index) {
+                        return index % TICK_EVERY_DAYS === 0 ? this.getLabelForValue(value) : '';
+                    }
+                };
 
             chart = new Chart(ctx, {
-                type: isProgress ? 'line' : 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: isProgress ? 'Cumulative hours' : 'Hours',
-                        data: isProgress ? cumulative : daily,
-                        backgroundColor: isProgress ? 'rgba(13,148,136,0.12)' : barColors,
-                        borderColor: '#0f766e',
-                        borderWidth: isProgress ? 2 : 0,
-                        fill: isProgress,
-                        tension: 0.35,
-                        pointRadius: isProgress ? 2 : 0,
-                        pointHoverRadius: 5,
-                        pointBackgroundColor: '#0f766e',
-                        borderRadius: isProgress ? 0 : 3,
-                        minBarLength: isProgress ? 0 : 2,   // keep a sliver visible for 0h days
-                        spanGaps: false,
-                    }]
-                },
+                type: type,
+                data: { labels: chartLabels, datasets: datasets },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        legend: { display: false },
+                        legend: { display: mode === 'daily', position: 'top' },
                         tooltip: {
                             callbacks: {
                                 label: function (c) {
-                                    if (!isProgress && c.parsed.y === 0) {
-                                        return 'NA / no hours logged';
-                                    }
-                                    return c.parsed.y + (isProgress ? ' total hours' : ' hours');
+                                    var v = c.parsed.y;
+                                    if (mode === 'progress') return v + ' total hours';
+                                    if (c.dataset.type === 'line') return c.dataset.label + ': ' + v + ' h';
+                                    if (v === 0) return 'No hours logged';
+                                    return v + (mode === 'weekly' ? ' hours this week' : ' hours');
                                 }
                             }
                         }
                     },
                     scales: {
-                        y: { beginAtZero: true, grid: { color: gridLine }, title: { display: true, text: 'Hours' } },
-                        x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 60 } }
+                        y: { beginAtZero: true, grid: { color: gridLine }, title: { display: true, text: yTitle } },
+                        x: {
+                            grid: { display: false },
+                            title: { display: true, text: xTitle },
+                            ticks: xTicks
+                        }
                     }
                 }
             });
