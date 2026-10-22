@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Compare Users - Timesheet</title>
+    <title>Compare Profiles - Timesheet</title>
     <script>
         (function () {
             var t = localStorage.getItem('theme') || 'dark';
@@ -12,6 +12,16 @@
     </script>
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/theme.js" defer></script>
+    <style>
+        .pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+        .pick-item { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer;
+                     border: 1px solid var(--grid-line); border-radius: 10px; user-select: none; }
+        .pick-item:hover { border-color: #0d9488; }
+        .pick-item input { accent-color: #0d9488; width: 16px; height: 16px; }
+        .pick-item.checked { border-color: #0d9488; background: rgba(13,148,136,0.12); }
+        .pick-actions { display: flex; align-items: center; gap: 16px; margin-top: 18px; flex-wrap: wrap; }
+        .pick-msg { color: #f87171; font-size: 0.9rem; display: none; }
+    </style>
 </head>
 <body>
     <header class="site-header">
@@ -20,41 +30,61 @@
                 <span class="theme-icon"></span><span class="theme-text"></span>
             </button>
             <a class="back-link" href="/">&larr; Back to dashboard</a>
-            <h1>Compare Users</h1>
-            <p class="subtitle">Select users to compare their activities and working hours</p>
+            <h1>Compare Profiles</h1>
+            <p class="subtitle">Tick two or more profiles to compare their activities and working hours</p>
         </div>
     </header>
 
     <main class="container">
         <section class="panel">
-            <h2 class="panel-title">Choose users</h2>
+            <h2 class="panel-title">Choose profiles</h2>
+            {% if all_users|length < 2 %}
+            <p class="empty">You need at least two profiles to compare. <a href="/">Add another profile.</a></p>
+            {% else %}
             <form method="get" action="/compare/results" id="compare-form">
-                <div class="select-row">
-                    <div class="select-field">
-                        <label for="user1">User 1</label>
-                        <select name="users" id="user1" required>
-                            <option value="" disabled {{ '' if selected_ids|length > 0 else 'selected' }}>Select a user</option>
-                            {% for u in all_users %}
-                            <option value="{{ u.id }}" {{ 'selected' if selected_ids|length > 0 and u.id == selected_ids[0] else '' }}>{{ u.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-
-                    <span class="vs-badge">vs</span>
-
-                    <div class="select-field">
-                        <label for="user2">User 2</label>
-                        <select name="users" id="user2" required>
-                            <option value="" disabled {{ '' if selected_ids|length > 1 else 'selected' }}>Select a user</option>
-                            {% for u in all_users %}
-                            <option value="{{ u.id }}" {{ 'selected' if selected_ids|length > 1 and u.id == selected_ids[1] else '' }}>{{ u.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                <div class="pick-grid">
+                    {% for u in all_users %}
+                    <label class="pick-item {{ 'checked' if u.id in selected_ids else '' }}">
+                        <input type="checkbox" name="users" value="{{ u.id }}" {{ 'checked' if u.id in selected_ids else '' }}>
+                        <span>{{ u.name }}</span>
+                    </label>
+                    {% endfor %}
                 </div>
-                <button type="submit" class="btn-primary" style="margin-top:18px;">Compare &rarr;</button>
+                <div class="pick-actions">
+                    <button type="submit" class="btn-primary">Compare &rarr;</button>
+                    <button type="button" class="btn-secondary" id="select-all">Select all</button>
+                    <span class="pick-msg" id="pick-msg">Please select at least two profiles.</span>
+                </div>
             </form>
+            {% endif %}
         </section>
     </main>
+
+    <script>
+        (function () {
+            var form = document.getElementById('compare-form');
+            if (!form) return;
+            var boxes = form.querySelectorAll('input[name="users"]');
+            var msg = document.getElementById('pick-msg');
+
+            function sync() {
+                boxes.forEach(function (b) { b.parentElement.classList.toggle('checked', b.checked); });
+                if (form.querySelectorAll('input[name="users"]:checked').length >= 2) msg.style.display = 'none';
+            }
+            boxes.forEach(function (b) { b.addEventListener('change', sync); });
+
+            document.getElementById('select-all').addEventListener('click', function () {
+                boxes.forEach(function (b) { b.checked = true; });
+                sync();
+            });
+
+            form.addEventListener('submit', function (e) {
+                if (form.querySelectorAll('input[name="users"]:checked').length < 2) {
+                    e.preventDefault();
+                    msg.style.display = 'inline';
+                }
+            });
+        })();
+    </script>
 </body>
 </html>
